@@ -31,9 +31,9 @@ function stringifyStyle(css, minify) {
   }
 
   const code = css.split(/(\r\n|\r|\n)/)
-    .map(line => JSON.stringify(`${line.trimRight()}`))
-    .filter(line => line !== '""')
-    .join(',\n');
+      .map(line => JSON.stringify(`${line.trimRight()}`))
+      .filter(line => line !== '""')
+      .join(',\n');
 
   return `[\n${code}\n].join('\\n')`;
 }
@@ -57,27 +57,35 @@ function fromFileURL(url) {
 
 // intercept file loading requests (@import directive) from libsass
 sass.importer(async (request, done) => {
-  // Currently only supporting scss imports due to
-  // https://github.com/sass/libsass/issues/1695
-  let content;
-  let resolved;
-  let readImportPath;
-  let readPartialPath;
-  try {
-    resolved = await resolvePath(request);
-    const partialUrl = resolved.replace(/\/([^/]*)$/, '/_$1');
-    readImportPath = fromFileURL(resolved);
-    readPartialPath = fromFileURL(partialUrl);
-    content = await loadFile(readPartialPath);
-  } catch (e) {
-    try {
-      content = await loadFile(readImportPath);
-    } catch (er) {
-      done();
-      return;
+  if (request.path) {
+    done();
+  } else {
+    const resolved = await resolvePath(request);
+    const readImportPath = fromFileURL(resolved);
+    const variation = sass.findPathVariation(fs.statSync, readImportPath);
+    let content;
+
+    if (variation) {
+      content = await loadFile(variation);
+      done({path: variation, content});
+    } else {
+      const partialUrl = resolved.replace(/\/([^/]*)$/, '/_$1');
+      const readPartialPath = fromFileURL(partialUrl);
+
+      try {
+        content = await loadFile(readPartialPath);
+      } catch (e) {
+        try {
+          content = await loadFile(readImportPath);
+        } catch (er) {
+          done();
+          return;
+        }
+      }
+
+      done({ content, path: resolved });
     }
   }
-  done({ content, path: resolved });
 });
 
 export default async function sassBuilder(loads, compileOpts, outputOpts) {
@@ -119,8 +127,8 @@ export default async function sassBuilder(loads, compileOpts, outputOpts) {
     // apply autoprefixer if enabled
     if (pluginOptions.autoprefixer) {
       const autoprefixerOptions = pluginOptions.autoprefixer instanceof Object
-        ? pluginOptions.autoprefixer
-        : undefined;
+          ? pluginOptions.autoprefixer
+          : undefined;
       const { css } = await postcss([autoprefixer(autoprefixerOptions)]).process(text);
       text = css;
     }
